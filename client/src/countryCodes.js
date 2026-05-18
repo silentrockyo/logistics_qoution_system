@@ -1,0 +1,30 @@
+const countryCodes = [
+  { code: "+91", label: "+91 India" },
+  { code: "+1", label: "+1 USA" },
+  { code: "+44", label: "+44 UK" },
+  { code: "+971", label: "+971 UAE" },
+  { code: "+61", label: "+61 Australia" },
+  { code: "+81", label: "+81 Japan" },
+  { code: "+86", label: "+86 China" },
+  { code: "+49", label: "+49 Germany" },
+  { code: "+33", label: "+33 France" },
+  { code: "+39", label: "+39 Italy" },
+  { code: "+34", label: "+34 Spain" },
+  { code: "+7", label: "+7 Russia" },
+  { code: "+82", label: "+82 South Korea" },
+  { code: "+31", label: "+31 Netherlands" },
+  { code: "+62", label: "+62 Indonesia" },
+  { code: "+66", label: "+66 Thailand" },
+  { code: "+65", label: "+65 Singapore" },
+  { code: "+60", label: "+60 Malaysia" },
+  { code: "+63", label: "+63 Philippines" },
+  { code: "+92", label: "+92 Pakistan" },
+  { code: "+880", label: "+880 Bangladesh" },
+  { code: "+20", label: "+20 Egypt" },
+  { code: "+27", label: "+27 South Africa" },
+  { code: "+52", label: "+52 Mexico" },
+  { code: "+55", label: "+55 Brazil" },
+  { code: "+64", label: "+64 New Zealand" }
+];
+
+export default countryCodes;
