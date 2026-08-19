@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import Ticket from "../models/Ticket.js";
 import User from "../models/User.js";
 import { authGuard, requireRole } from "../middleware/auth.js";
-import { sendError, sendSuccess } from "../utils/response.js";
 
 const router = express.Router();
 
@@ -21,54 +20,16 @@ const pushNotification = async (filter, payload) => {
   await User.updateMany(filter, { $push: { notifications: payload } });
 };
 
-const normalizeStatus = (status) => {
-  if (!status) return status;
-  if (status === "open") return "pending";
-  if (status === "in_transit") return "booked";
-  return status;
-};
-
-const statusFilterValues = (status) => {
-  if (!status) return null;
-  if (status === "pending") return ["pending", "open"];
-  if (status === "booked") return ["booked", "in_transit"];
-  return [status];
-};
-
-const mapTicket = (ticket) => {
-  const obj = ticket.toObject();
-  obj.status = normalizeStatus(obj.status);
-  return obj;
-};
-
-const parseNumber = (value, fallback) => {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
 router.use(authGuard);
 
 router.get("/", async (req, res) => {
   try {
-    const filter = {};
-    if (req.user.role === "customer") {
-      filter.$or = [{ customerId: req.user.id }, { customer: req.user.id }];
-    } else if (req.user.role === "employee") {
-      filter.$or = [
-        { assignedEmployeeId: req.user.id },
-        { assignedEmployee: req.user.id },
-        {
-          assignedEmployeeId: { $in: [null, undefined] },
-          assignedEmployee: { $in: [null, undefined] },
-          status: { $in: ["pending", "open"] },
-        },
-      ];
-    }
-
+    const filter = req.user.role === "customer" ? { customer: req.user.id } : {};
     const { status, origin, destination, dateFrom, dateTo } = req.query;
-    const statusValues = statusFilterValues(status);
-    if (statusValues) {
-      filter.status = { $in: statusValues };
+
+    if (status) {
+      const normalizedStatus = status === "pending" ? "open" : status;
+      filter.status = normalizedStatus;
     }
     if (origin) {
       filter.origin = new RegExp(origin, "i");
@@ -96,45 +57,27 @@ router.get("/", async (req, res) => {
       filter.createdAt = createdAt;
     }
 
-    const page = Math.max(1, parseNumber(req.query.page, 1));
-    const limit = Math.min(100, Math.max(1, parseNumber(req.query.limit, 20)));
-    const skip = (page - 1) * limit;
-
-    const [total, tickets] = await Promise.all([
-      Ticket.countDocuments(filter),
-      Ticket.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
-    ]);
-
-    const items = tickets.map(mapTicket);
-    return sendSuccess(res, {
-      items,
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit) || 1,
-    }, "Tickets loaded");
+    const tickets = await Ticket.find(filter).sort({ createdAt: -1 });
+    return res.json(tickets);
   } catch (error) {
-    return sendError(res, "Failed to load tickets", 500);
+    return res.status(500).json({ message: "Failed to load tickets" });
   }
 });
 
 router.get("/:id", async (req, res) => {
   try {
-    const baseFilter = {};
-    if (req.user.role === "customer") {
-      baseFilter.$or = [{ customerId: req.user.id }, { customer: req.user.id }];
-    }
+    const baseFilter = req.user.role === "customer" ? { customer: req.user.id } : {};
     const { id } = req.params;
     let ticket = await Ticket.findOne({ ...baseFilter, ticketId: id });
     if (!ticket && mongoose.isValidObjectId(id)) {
       ticket = await Ticket.findOne({ ...baseFilter, _id: id });
     }
     if (!ticket) {
-      return sendError(res, "Ticket not found", 404);
+      return res.status(404).json({ message: "Ticket not found" });
     }
-    return sendSuccess(res, mapTicket(ticket), "Ticket loaded");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to load ticket", 500);
+    return res.status(500).json({ message: "Failed to load ticket" });
   }
 });
 
@@ -150,20 +93,20 @@ router.post("/", requireRole("customer"), async (req, res) => {
       notes,
     } = req.body;
     if (!origin || !destination || !cargoType) {
-      return sendError(res, "All shipment fields are required", 400);
+      return res.status(400).json({ message: "All shipment fields are required" });
     }
     if (!shipperIdStatus || !["known", "unknown"].includes(shipperIdStatus)) {
-      return sendError(res, "Shipper ID status is required", 400);
+      return res.status(400).json({ message: "Shipper ID status is required" });
     }
     if (!Array.isArray(loads) || loads.length === 0) {
-      return sendError(res, "At least one load is required", 400);
+      return res.status(400).json({ message: "At least one load is required" });
     }
     for (const load of loads) {
       if (!load.unitCount || !load.weightPerUnit || !load.totalWeight || !load.dimensions) {
-        return sendError(res, "Load details are required", 400);
+        return res.status(400).json({ message: "Load details are required" });
       }
       if (!load.dimensions.length || !load.dimensions.width || !load.dimensions.height || !load.dimensions.unit) {
-        return sendError(res, "Dimensions are required", 400);
+        return res.status(400).json({ message: "Dimensions are required" });
       }
     }
     const sanitizedLoads = loads.map((load) => ({
@@ -186,7 +129,6 @@ router.post("/", requireRole("customer"), async (req, res) => {
     const ticket = await Ticket.create({
       ticketId: buildId("TCK"),
       customer: req.user.id,
-      customerId: req.user.id,
       customerName: req.user.name,
       origin,
       destination,
@@ -195,14 +137,10 @@ router.post("/", requireRole("customer"), async (req, res) => {
       loads: sanitizedLoads,
       loadSummary: summaries,
       notes,
-      status: "pending",
-      assignedEmployee: null,
-      assignedEmployeeId: null,
-      assignedEmployeeName: null,
-      assignedEmployeeCode: null,
+      status: "open",
     });
     await pushNotification(
-      { role: "admin", isDeleted: { $ne: true } },
+      { role: "admin", isDeleted: false },
       {
         title: "New tender submitted",
         message: `Ticket ${ticket.ticketId} created by ${req.user.name}.`,
@@ -210,110 +148,75 @@ router.post("/", requireRole("customer"), async (req, res) => {
         ticketId: ticket.ticketId,
       }
     );
-    return sendSuccess(res, mapTicket(ticket), "Ticket created", 201);
+    return res.status(201).json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to create ticket", 500);
+    return res.status(500).json({ message: "Failed to create ticket" });
   }
 });
 
 router.patch("/:ticketId/status", requireRole("employee", "admin"), async (req, res) => {
   try {
     const { status } = req.body;
-    const transitionMap = {
-      pending: ["assigned"],
-      assigned: ["quoted"],
-      quoted: ["accepted"],
-      accepted: ["booked"],
-      booked: ["closed"],
-    };
-    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId });
-    if (!ticket) {
-      return sendError(res, "Ticket not found", 404);
-    }
-    const currentStatus = normalizeStatus(ticket.status);
-    if (currentStatus === "closed") {
-      return sendError(res, "Ticket already closed", 400);
-    }
-    const allowed = transitionMap[currentStatus] || [];
+    const allowed = ["open", "quoted", "in_transit", "closed"];
     if (!allowed.includes(status)) {
-      return sendError(res, "Invalid status transition", 400);
+      return res.status(400).json({ message: "Invalid status" });
     }
-    const updated = await Ticket.findOneAndUpdate(
-      { _id: ticket._id, status: ticket.status },
+    const ticket = await Ticket.findOneAndUpdate(
+      { ticketId: req.params.ticketId },
       { status },
       { new: true }
     );
-    if (!updated) {
-      return sendError(res, "Ticket already updated by another user", 409);
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
     }
-    return sendSuccess(res, mapTicket(updated), "Status updated");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to update status", 500);
+    return res.status(500).json({ message: "Failed to update status" });
   }
 });
 
 router.patch("/:ticketId/assign", requireRole("admin"), async (req, res) => {
   try {
     const { employeeId } = req.body;
-    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId });
-    if (!ticket) {
-      return sendError(res, "Ticket not found", 404);
-    }
-    const normalizedStatus = normalizeStatus(ticket.status);
-    if (normalizedStatus === "closed") {
-      return sendError(res, "Ticket already closed", 400);
-    }
-
     if (!employeeId) {
-      const nextStatus = normalizedStatus === "assigned" ? "pending" : normalizedStatus;
-      const updated = await Ticket.findOneAndUpdate(
-        { _id: ticket._id, status: ticket.status },
-        {
-          assignedEmployee: null,
-          assignedEmployeeId: null,
-          assignedEmployeeName: null,
-          assignedEmployeeCode: null,
-          status: nextStatus,
-        },
+      const ticket = await Ticket.findOneAndUpdate(
+        { ticketId: req.params.ticketId },
+        { assignedEmployee: null, assignedEmployeeName: null, assignedEmployeeId: null },
         { new: true }
       );
-      if (!updated) {
-        return sendError(res, "Ticket already updated by another user", 409);
+      if (!ticket) {
+        return res.status(404).json({ message: "Ticket not found" });
       }
-      return sendSuccess(res, mapTicket(updated), "Ticket unassigned");
+      return res.json(ticket);
     }
-
-    const employee = await User.findOne({ _id: employeeId, role: "employee", isDeleted: { $ne: true } });
+    const employee = await User.findOne({ _id: employeeId, role: "employee", isDeleted: false });
     if (!employee) {
-      return sendError(res, "Employee not found", 404);
+      return res.status(404).json({ message: "Employee not found" });
     }
-    const nextStatus = normalizedStatus === "pending" ? "assigned" : normalizedStatus;
-    const updated = await Ticket.findOneAndUpdate(
-      { _id: ticket._id, status: ticket.status },
+    const ticket = await Ticket.findOneAndUpdate(
+      { ticketId: req.params.ticketId },
       {
         assignedEmployee: employee._id,
-        assignedEmployeeId: employee._id,
         assignedEmployeeName: employee.name,
-        assignedEmployeeCode: employee.employeeId,
-        status: nextStatus,
+        assignedEmployeeId: employee.employeeId,
       },
       { new: true }
     );
-    if (!updated) {
-      return sendError(res, "Ticket already updated by another user", 409);
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
     }
     await pushNotification(
       { _id: employee._id },
       {
         title: "New tender assigned",
-        message: `Ticket ${updated.ticketId} has been assigned to you.`,
+        message: `Ticket ${ticket.ticketId} has been assigned to you.`,
         type: "assignment",
-        ticketId: updated.ticketId,
+        ticketId: ticket.ticketId,
       }
     );
-    return sendSuccess(res, mapTicket(updated), "Ticket assigned");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to assign employee", 500);
+    return res.status(500).json({ message: "Failed to assign employee" });
   }
 });
 
@@ -332,24 +235,22 @@ router.post("/:ticketId/quote", requireRole("employee"), async (req, res) => {
       quoteDate,
     } = req.body;
     if (!carrier || !rate) {
-      return sendError(res, "Carrier and rate are required", 400);
+      return res.status(400).json({ message: "Carrier and rate are required" });
     }
     if (Number.isNaN(Number(rate))) {
-      return sendError(res, "Rate must be numeric", 400);
+      return res.status(400).json({ message: "Rate must be numeric" });
     }
     if (chargeableWeight && Number.isNaN(Number(chargeableWeight))) {
-      return sendError(res, "Chargeable weight must be numeric", 400);
+      return res.status(400).json({ message: "Chargeable weight must be numeric" });
     }
     if (totalAmount && Number.isNaN(Number(totalAmount))) {
-      return sendError(res, "Total amount must be numeric", 400);
+      return res.status(400).json({ message: "Total amount must be numeric" });
     }
-
-    const employee = await User.findById(req.user.id).lean();
-    if (!employee) {
-      return sendError(res, "Employee not found", 404);
+    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId });
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
     }
-
-    const quote = {
+    ticket.quotes.push({
       quoteId: buildId("QTE"),
       carrier,
       serviceType,
@@ -364,38 +265,9 @@ router.post("/:ticketId/quote", requireRole("employee"), async (req, res) => {
       status: "sent",
       createdBy: req.user.id,
       createdByName: req.user.name,
-    };
-
-    const ticket = await Ticket.findOneAndUpdate(
-      {
-        ticketId: req.params.ticketId,
-        status: { $in: ["pending", "assigned", "open"] },
-        $or: [
-          { assignedEmployeeId: req.user.id },
-          { assignedEmployee: req.user.id },
-          { assignedEmployeeId: { $in: [null, undefined] } },
-          { assignedEmployee: { $in: [null, undefined] } },
-        ],
-      },
-      {
-        $push: { quotes: quote },
-        $set: {
-          status: "quoted",
-          quotedBy: req.user.id,
-          quoteDetails: quote,
-          assignedEmployee: employee._id,
-          assignedEmployeeId: employee._id,
-          assignedEmployeeName: employee.name,
-          assignedEmployeeCode: employee.employeeId,
-        },
-      },
-      { new: true }
-    );
-
-    if (!ticket) {
-      return sendError(res, "Ticket not available for quoting", 409);
-    }
-
+    });
+    ticket.status = "quoted";
+    await ticket.save();
     await pushNotification(
       { _id: ticket.customer },
       {
@@ -405,142 +277,137 @@ router.post("/:ticketId/quote", requireRole("employee"), async (req, res) => {
         ticketId: ticket.ticketId,
       }
     );
-    return sendSuccess(res, mapTicket(ticket), "Quote sent");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to send quote", 500);
+    return res.status(500).json({ message: "Failed to send quote" });
   }
 });
 
 router.post("/:ticketId/confirm", requireRole("customer"), async (req, res) => {
   try {
-    const ticket = await Ticket.findOne({
-      ticketId: req.params.ticketId,
-      $or: [{ customerId: req.user.id }, { customer: req.user.id }],
-    });
+    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId, customer: req.user.id });
     if (!ticket) {
-      return sendError(res, "Ticket not found", 404);
-    }
-    const normalizedStatus = normalizeStatus(ticket.status);
-    if (normalizedStatus !== "quoted") {
-      return sendError(res, "Ticket is not ready for confirmation", 400);
+      return res.status(404).json({ message: "Ticket not found" });
     }
     if (!ticket.quotes || ticket.quotes.length === 0) {
-      return sendError(res, "Quote not available", 400);
+      return res.status(400).json({ message: "Quote not available" });
     }
-    const lastQuote = ticket.quotes[ticket.quotes.length - 1];
-    const updated = await Ticket.findOneAndUpdate(
-      { _id: ticket._id, status: ticket.status },
-      {
-        $set: {
-          status: "accepted",
-          quoteDetails: { ...lastQuote.toObject(), status: "accepted" },
-          "quotes.$[quote].status": "accepted",
-        },
-      },
-      {
-        new: true,
-        arrayFilters: [{ "quote.quoteId": lastQuote.quoteId }],
-      }
-    );
-    if (!updated) {
-      return sendError(res, "Ticket already updated by another user", 409);
-    }
-    if (updated.assignedEmployee) {
+    ticket.quotes[ticket.quotes.length - 1].status = "accepted";
+    ticket.status = "in_transit";
+    await ticket.save();
+    if (ticket.assignedEmployee) {
       await pushNotification(
-        { _id: updated.assignedEmployee },
+        { _id: ticket.assignedEmployee },
         {
           title: "Quote accepted",
-          message: `Customer accepted quote for ticket ${updated.ticketId}.`,
+          message: `Customer accepted quote for ticket ${ticket.ticketId}.`,
           type: "quote",
-          ticketId: updated.ticketId,
+          ticketId: ticket.ticketId,
         }
       );
     }
-    return sendSuccess(res, mapTicket(updated), "Quote confirmed");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to confirm quote", 500);
+    return res.status(500).json({ message: "Failed to confirm quote" });
   }
 });
 
 router.post("/:ticketId/reopen", requireRole("customer"), async (req, res) => {
   try {
-    const ticket = await Ticket.findOne({
-      ticketId: req.params.ticketId,
-      $or: [{ customerId: req.user.id }, { customer: req.user.id }],
-    });
+    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId, customer: req.user.id });
     if (!ticket) {
-      return sendError(res, "Ticket not found", 404);
+      return res.status(404).json({ message: "Ticket not found" });
     }
-    const normalizedStatus = normalizeStatus(ticket.status);
-    if (!['quoted', 'accepted'].includes(normalizedStatus)) {
-      return sendError(res, "Ticket is not ready to reopen", 400);
+    ticket.status = "open";
+    if (ticket.quotes && ticket.quotes.length > 0) {
+      ticket.quotes[ticket.quotes.length - 1].status = "rejected";
     }
-    const lastQuote = ticket.quotes?.[ticket.quotes.length - 1];
-    if (!lastQuote) {
-      return sendError(res, "Quote not available", 400);
-    }
-    const nextStatus = ticket.assignedEmployee ? "assigned" : "pending";
-    const updated = await Ticket.findOneAndUpdate(
-      { _id: ticket._id, status: ticket.status },
-      {
-        $set: {
-          status: nextStatus,
-          "quotes.$[quote].status": "rejected",
-        },
-      },
-      {
-        new: true,
-        arrayFilters: [{ "quote.quoteId": lastQuote.quoteId }],
-      }
-    );
-    if (!updated) {
-      return sendError(res, "Ticket already updated by another user", 409);
-    }
-    if (updated.assignedEmployee) {
+    await ticket.save();
+    if (ticket.assignedEmployee) {
       await pushNotification(
-        { _id: updated.assignedEmployee },
+        { _id: ticket.assignedEmployee },
         {
           title: "Quote reopened",
-          message: `Customer requested changes for ticket ${updated.ticketId}.`,
+          message: `Customer requested changes for ticket ${ticket.ticketId}.`,
           type: "quote",
-          ticketId: updated.ticketId,
+          ticketId: ticket.ticketId,
         }
       );
     }
-    return sendSuccess(res, mapTicket(updated), "Ticket reopened");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to reopen ticket", 500);
+    return res.status(500).json({ message: "Failed to reopen ticket" });
   }
 });
 
-router.post("/:ticketId/book", requireRole("employee", "admin"), async (req, res) => {
+router.post("/:ticketId/close", requireRole("employee", "admin"), async (req, res) => {
+  try {
+    const { bookedOn, finalRate, awbNumber, screenshotUrl, closingNotes } = req.body;
+    if (!bookedOn || !finalRate || !awbNumber) {
+      return res.status(400).json({ message: "Booked on, final rate, and AWB number are required" });
+    }
+    if (!/^[A-Za-z0-9-]+$/.test(awbNumber)) {
+      return res.status(400).json({ message: "Invalid AWB format" });
+    }
+    if (Number.isNaN(Number(finalRate))) {
+      return res.status(400).json({ message: "Final rate must be numeric" });
+    }
+    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId });
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+    ticket.bookedOn = bookedOn;
+    ticket.finalRate = Number(finalRate);
+    ticket.awbNumber = awbNumber;
+    ticket.screenshotUrl = screenshotUrl || null;
+    ticket.closingNotes = closingNotes || "";
+    ticket.closedBy = req.user.id;
+    ticket.closedByName = req.user.name;
+    ticket.closedAt = new Date().toISOString();
+    ticket.status = "closed";
+    await ticket.save();
+    await pushNotification(
+      { _id: ticket.customer },
+      {
+        title: "Ticket closed",
+        message: `Ticket ${ticket.ticketId} has been closed.`,
+        type: "closure",
+        ticketId: ticket.ticketId,
+      }
+    );
+    await pushNotification(
+      { role: "admin", isDeleted: false },
+      {
+        title: "Ticket closed",
+        message: `Ticket ${ticket.ticketId} closed by ${req.user.name}.`,
+        type: "closure",
+        ticketId: ticket.ticketId,
+      }
+    );
+    return res.json(ticket);
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to close ticket" });
+  }
+});
+
+router.post("/:ticketId/book", requireRole("employee"), async (req, res) => {
   try {
     const { reference, notes } = req.body;
     if (!reference) {
-      return sendError(res, "Booking reference required", 400);
+      return res.status(400).json({ message: "Booking reference required" });
     }
-    const booking = {
+    const ticket = await Ticket.findOne({ ticketId: req.params.ticketId });
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+    ticket.booking = {
       bookingId: buildId("BKG"),
       reference,
       notes,
       bookedBy: req.user.id,
-      bookedAt: new Date(),
     };
-    const ticket = await Ticket.findOneAndUpdate(
-      { ticketId: req.params.ticketId, status: { $in: ["accepted", "in_transit"] } },
-      {
-        $set: {
-          booking,
-          bookingConfirmation: booking,
-          confirmedBy: req.user.id,
-          status: "booked",
-        },
-      },
-      { new: true }
-    );
-    if (!ticket) {
-      return sendError(res, "Ticket is not ready for booking", 409);
-    }
+    ticket.status = "closed";
+    await ticket.save();
     await pushNotification(
       { _id: ticket.customer },
       {
@@ -550,76 +417,9 @@ router.post("/:ticketId/book", requireRole("employee", "admin"), async (req, res
         ticketId: ticket.ticketId,
       }
     );
-    return sendSuccess(res, mapTicket(ticket), "Booking saved");
+    return res.json(ticket);
   } catch (error) {
-    return sendError(res, "Failed to book shipment", 500);
-  }
-});
-
-router.post("/:ticketId/close", requireRole("employee", "admin"), async (req, res) => {
-  try {
-    const { bookedOn, finalRate, awbNumber, screenshotUrl, closingNotes } = req.body;
-    if (!bookedOn || !finalRate || !awbNumber) {
-      return sendError(res, "Booked on, final rate, and AWB number are required", 400);
-    }
-    if (!/^[A-Za-z0-9-]+$/.test(awbNumber)) {
-      return sendError(res, "Invalid AWB format", 400);
-    }
-    if (Number.isNaN(Number(finalRate))) {
-      return sendError(res, "Final rate must be numeric", 400);
-    }
-
-    const updated = await Ticket.findOneAndUpdate(
-      { ticketId: req.params.ticketId, status: { $in: ["booked", "in_transit"] } },
-      {
-        $set: {
-          bookedOn,
-          finalRate: Number(finalRate),
-          awbNumber,
-          screenshotUrl: screenshotUrl || null,
-          closingNotes: closingNotes || "",
-          closedBy: req.user.id,
-          closedByName: req.user.name,
-          closedAt: new Date().toISOString(),
-          status: "closed",
-        },
-      },
-      { new: true }
-    );
-
-    if (!updated) {
-      const existing = await Ticket.findOne({ ticketId: req.params.ticketId });
-      if (!existing) {
-        return sendError(res, "Ticket not found", 404);
-      }
-      const normalizedStatus = normalizeStatus(existing.status);
-      if (normalizedStatus === "closed") {
-        return sendError(res, "Ticket already closed by another employee.", 409);
-      }
-      return sendError(res, "Ticket is not ready to close", 409);
-    }
-
-    await pushNotification(
-      { _id: updated.customer },
-      {
-        title: "Ticket closed",
-        message: `Ticket ${updated.ticketId} has been closed.`,
-        type: "closure",
-        ticketId: updated.ticketId,
-      }
-    );
-    await pushNotification(
-      { role: "admin", isDeleted: { $ne: true } },
-      {
-        title: "Ticket closed",
-        message: `Ticket ${updated.ticketId} closed by ${req.user.name}.`,
-        type: "closure",
-        ticketId: updated.ticketId,
-      }
-    );
-    return sendSuccess(res, mapTicket(updated), "Ticket closed");
-  } catch (error) {
-    return sendError(res, "Failed to close ticket", 500);
+    return res.status(500).json({ message: "Failed to book shipment" });
   }
 });
 

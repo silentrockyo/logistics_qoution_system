@@ -48,10 +48,6 @@ const emptyBooking = {
 const statusLabel = (status) => {
   if (!status) return "";
   if (status === "open") return "PENDING";
-  if (status === "pending") return "PENDING";
-  if (status === "assigned") return "ASSIGNED";
-  if (status === "accepted") return "ACCEPTED";
-  if (status === "booked") return "BOOKED";
   return status.replace(/_/g, " ").toUpperCase();
 };
 const MAX_WEIGHT_DECIMALS = 2;
@@ -70,11 +66,9 @@ const emptyEmployeeForm = {
 };
 
 const nameRegex = /^[A-Za-z ]+$/;
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const nameMinLength = 2;
 const nameMaxLength = 50;
 const nameErrorMessage = "Name can contain only letters and spaces";
-const emailErrorMessage = "Please enter a valid email";
 const phoneErrorMessage = "Enter a valid 10-digit phone number";
 const consecutiveSpaceRegex = /\s{2,}/;
 
@@ -107,11 +101,6 @@ const normalizePhoneInput = (value) => {
 const isValidPhone = (value) => {
   if (!value) return false;
   return /^[0-9]{10}$/.test(value);
-};
-
-const isValidEmail = (value) => {
-  if (!value) return false;
-  return emailRegex.test(value.trim().toLowerCase());
 };
 
 const airportOptions = airportData.map((airport) => ({
@@ -178,8 +167,6 @@ export default function App() {
     destination: "",
     dateFrom: "",
     dateTo: "",
-    page: 1,
-    limit: 20,
   });
   const [dashboardStats, setDashboardStats] = useState({
     totalTickets: 0,
@@ -259,7 +246,7 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem("freight_auth");
+    const saved = localStorage.getItem("freight_auth");
     if (saved) {
       const parsed = JSON.parse(saved);
       setToken(parsed.token);
@@ -358,11 +345,8 @@ export default function App() {
       if (filters.destination) params.destination = filters.destination;
       if (filters.dateFrom) params.dateFrom = filters.dateFrom;
       if (filters.dateTo) params.dateTo = filters.dateTo;
-      params.page = filters.page || 1;
-      params.limit = filters.limit || 20;
       const { data } = await api.get("/tickets", { params });
-      const items = data?.data?.items || data?.items || [];
-      setTickets(items);
+      setTickets(data);
     } catch (error) {
       setToastMessage(error.response?.data?.message || "Failed to load tickets");
     }
@@ -372,14 +356,7 @@ export default function App() {
     try {
       setDashboardLoading(true);
       const { data } = await api.get("/dashboard/stats");
-      const stats = data?.data || data || {};
-      setDashboardStats({
-        totalTickets: stats.totalTickets ?? 0,
-        pendingTickets: stats.pendingTickets ?? 0,
-        quotedTickets: stats.quotedTickets ?? 0,
-        closedTickets: stats.closedTickets ?? 0,
-        todayTickets: stats.todayTickets ?? 0,
-      });
+      setDashboardStats(data);
       setDashboardReady(true);
     } catch (error) {
       setToastMessage(error.response?.data?.message || "Failed to load dashboard stats");
@@ -392,20 +369,19 @@ export default function App() {
     try {
       setProfileLoading(true);
       const { data } = await api.get("/users/me");
-      const profile = data?.data || data;
-      setProfileData(profile);
+      setProfileData(data);
       setSettingsData((prev) => ({
         ...prev,
-        name: profile?.name || "",
-        email: profile?.email || "",
-        phoneCountryCode: profile?.phoneCountryCode || "+91",
-        phoneNumber: profile?.phoneNumber || "",
-        company: profile?.company || "",
-        avatarUrl: profile?.avatarUrl || "",
-        preferences: profile?.preferences || prev.preferences,
+        name: data.name || "",
+        email: data.email || "",
+        phoneCountryCode: data.phoneCountryCode || "+91",
+        phoneNumber: data.phoneNumber || "",
+        company: data.company || "",
+        avatarUrl: data.avatarUrl || "",
+        preferences: data.preferences || prev.preferences,
       }));
-      setUserName(profile?.name || "");
-      setUserEmail(profile?.email || "");
+      setUserName(data.name || "");
+      setUserEmail(data.email || "");
     } catch (error) {
       setToastMessage(error.response?.data?.message || "Failed to load profile");
     } finally {
@@ -417,8 +393,7 @@ export default function App() {
     try {
       setNotificationsLoading(true);
       const { data } = await api.get("/notifications");
-      const items = data?.data?.items || data?.notifications || [];
-      setNotifications(items);
+      setNotifications(data.notifications || []);
     } catch (error) {
       setToastMessage(error.response?.data?.message || "Failed to load notifications");
     } finally {
@@ -430,8 +405,7 @@ export default function App() {
     try {
       setFeedbackLoading(true);
       const { data } = await api.get("/feedback");
-      const items = data?.data?.items || data?.feedback || [];
-      setFeedbackList(items);
+      setFeedbackList(data.feedback || []);
     } catch (error) {
       setToastMessage(error.response?.data?.message || "Failed to load feedback");
     } finally {
@@ -440,13 +414,8 @@ export default function App() {
   };
 
   const fetchEmployees = async () => {
-    try {
-      const { data } = await api.get("/employees");
-      const items = data?.data?.items || data?.items || [];
-      setEmployees(items);
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to load employees");
-    }
+    const { data } = await api.get("/employees");
+    setEmployees(data);
   };
 
   const onAuthChange = (field, value) => {
@@ -460,20 +429,12 @@ export default function App() {
         setMessage(`${nameErrorMessage}.`);
         return;
       }
-      if (!isValidEmail(authForm.email)) {
-        setMessage(`${emailErrorMessage}.`);
-        return;
-      }
-      if (!authForm.password.trim()) {
-        setMessage("Password is required.");
-        return;
-      }
       const { data } = await api.post("/auth/signup", {
         name: normalizedName,
         email: authForm.email,
         password: authForm.password,
       });
-      setMessage(data?.message || "Account created. Please login.");
+      setMessage("Account created. Please login.");
       setAuthMode("login");
     } catch (error) {
       setMessage(error.response?.data?.message || "Signup failed");
@@ -482,25 +443,16 @@ export default function App() {
 
   const handleLogin = async () => {
     try {
-      if (!authForm.email.trim() || !authForm.password.trim()) {
-        setMessage("Email and password are required.");
-        return;
-      }
-      if (!isValidEmail(authForm.email)) {
-        setMessage(`${emailErrorMessage}.`);
-        return;
-      }
       const { data } = await api.post("/auth/login", {
         email: authForm.email,
         password: authForm.password,
       });
-      const payload = data?.data || data;
-      setToken(payload.token);
-      setAuthToken(payload.token);
-      setUserName(payload.name);
-      setRole(payload.role);
-      setUserEmail(payload.email || authForm.email);
-      sessionStorage.setItem("freight_auth", JSON.stringify(payload));
+      setToken(data.token);
+      setAuthToken(data.token);
+      setUserName(data.name);
+      setRole(data.role);
+      setUserEmail(data.email || authForm.email);
+      localStorage.setItem("freight_auth", JSON.stringify(data));
       setMessage("");
     } catch (error) {
       setMessage(error.response?.data?.message || "Login failed");
@@ -539,7 +491,7 @@ export default function App() {
     setNotificationsOpen(false);
     setNotifications([]);
     setProfileData(null);
-    sessionStorage.removeItem("freight_auth");
+    localStorage.removeItem("freight_auth");
     setAuthToken(null);
     navigate("/");
   };
@@ -556,10 +508,6 @@ export default function App() {
         setToastMessage(`${nameErrorMessage}.`);
         return;
       }
-      if (settingsData.email && !isValidEmail(settingsData.email)) {
-        setToastMessage(`${emailErrorMessage}.`);
-        return;
-      }
       if (normalizedPhone && !isValidPhone(normalizedPhone)) {
         setToastMessage(phoneErrorMessage);
         return;
@@ -573,17 +521,16 @@ export default function App() {
         avatarUrl: settingsData.avatarUrl,
       };
       const { data } = await api.put("/users/profile", payload);
-      const profile = data?.data || data;
-      setProfileData((prev) => ({ ...prev, ...profile }));
-      setUserName(profile?.name || "");
-      setUserEmail(profile?.email || "");
-      const saved = sessionStorage.getItem("freight_auth");
+      setProfileData((prev) => ({ ...prev, ...data }));
+      setUserName(data.name || "");
+      setUserEmail(data.email || "");
+      const saved = localStorage.getItem("freight_auth");
       if (saved) {
         const parsed = JSON.parse(saved);
-        sessionStorage.setItem("freight_auth", JSON.stringify({
+        localStorage.setItem("freight_auth", JSON.stringify({
           ...parsed,
-          name: profile?.name || parsed.name,
-          email: profile?.email || parsed.email,
+          name: data.name || parsed.name,
+          email: data.email || parsed.email,
         }));
       }
       setToastMessage("Profile updated successfully.");
@@ -608,11 +555,6 @@ export default function App() {
         setSettingsSaving(false);
         return;
       }
-      if (settingsData.email && !isValidEmail(settingsData.email)) {
-        setSettingsError(`${emailErrorMessage}.`);
-        setSettingsSaving(false);
-        return;
-      }
       if (normalizedPhone && !isValidPhone(normalizedPhone)) {
         setSettingsError(phoneErrorMessage);
         setSettingsSaving(false);
@@ -628,17 +570,16 @@ export default function App() {
         preferences: settingsData.preferences,
       };
       const { data } = await api.put("/users/profile", payload);
-      const profile = data?.data || data;
-      setProfileData((prev) => ({ ...prev, ...profile, preferences: profile?.preferences || settingsData.preferences }));
-      setUserName(profile?.name || "");
-      setUserEmail(profile?.email || "");
-      const saved = sessionStorage.getItem("freight_auth");
+      setProfileData((prev) => ({ ...prev, ...data, preferences: data.preferences || settingsData.preferences }));
+      setUserName(data.name || "");
+      setUserEmail(data.email || "");
+      const saved = localStorage.getItem("freight_auth");
       if (saved) {
         const parsed = JSON.parse(saved);
-        sessionStorage.setItem("freight_auth", JSON.stringify({
+        localStorage.setItem("freight_auth", JSON.stringify({
           ...parsed,
-          name: profile?.name || parsed.name,
-          email: profile?.email || parsed.email,
+          name: data.name || parsed.name,
+          email: data.email || parsed.email,
         }));
       }
       setToastMessage("Settings saved successfully.");
@@ -672,33 +613,18 @@ export default function App() {
   };
 
   const markNotificationRead = async (id) => {
-    try {
-      const { data } = await api.patch("/notifications/read", { id });
-      const items = data?.data?.items || data?.notifications || [];
-      setNotifications(items);
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to update notifications");
-    }
+    await api.patch("/notifications/read", { id });
+    fetchNotifications();
   };
 
   const markAllNotificationsRead = async () => {
-    try {
-      const { data } = await api.patch("/notifications/read", { all: true });
-      const items = data?.data?.items || data?.notifications || [];
-      setNotifications(items);
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to update notifications");
-    }
+    await api.patch("/notifications/read", { all: true });
+    fetchNotifications();
   };
 
   const clearNotifications = async () => {
-    try {
-      const { data } = await api.delete("/notifications");
-      const items = data?.data?.items || data?.notifications || [];
-      setNotifications(items);
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to clear notifications");
-    }
+    await api.delete("/notifications");
+    fetchNotifications();
   };
 
   const submitFeedback = async () => {
@@ -716,40 +642,22 @@ export default function App() {
       return;
     }
     try {
-      const { data } = await api.post("/feedback", { ...feedbackForm, name: normalizedName });
+      await api.post("/feedback", { ...feedbackForm, name: normalizedName });
       setFeedbackForm({ name: "", email: "", message: "" });
-      setFeedbackMessage(data?.message || "Thank you! Your feedback has been submitted.");
+      setFeedbackMessage("Thank you! Your feedback has been submitted.");
     } catch (error) {
       setFeedbackMessage(error.response?.data?.message || "Failed to submit feedback.");
     }
   };
 
   const markFeedbackRead = async (id) => {
-    try {
-      const { data } = await api.patch(`/feedback/${id}/read`);
-      const items = data?.data?.items;
-      if (items) {
-        setFeedbackList(items);
-      } else {
-        fetchFeedback();
-      }
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to update feedback");
-    }
+    await api.patch(`/feedback/${id}/read`);
+    fetchFeedback();
   };
 
   const deleteFeedback = async (id) => {
-    try {
-      const { data } = await api.delete(`/feedback/${id}`);
-      const items = data?.data?.items;
-      if (items) {
-        setFeedbackList(items);
-      } else {
-        fetchFeedback();
-      }
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to delete feedback");
-    }
+    await api.delete(`/feedback/${id}`);
+    fetchFeedback();
   };
 
   const scrollToSection = (id) => {
@@ -777,15 +685,13 @@ export default function App() {
   const profilePhoneInvalid = settingsData.phoneNumber ? !isValidPhone(settingsData.phoneNumber) : false;
   const employeeNameInvalid = employeeForm.name ? !isValidName(employeeForm.name) : false;
   const employeePhoneInvalid = employeeForm.phoneNumber ? !isValidPhone(employeeForm.phoneNumber) : false;
-  const employeeEmailInvalid = employeeForm.email ? !isValidEmail(employeeForm.email) : false;
   const feedbackNameInvalid = feedbackForm.name ? !isValidName(feedbackForm.name) : false;
 
   const isSignupDisabled = authMode === "signup" && (
     !authForm.name.trim() ||
     !authForm.email.trim() ||
     !authForm.password.trim() ||
-    !isValidName(authForm.name) ||
-    !isValidEmail(authForm.email)
+    !isValidName(authForm.name)
   );
   const isProfileSaveDisabled = !isValidName(settingsData.name) || profilePhoneInvalid;
   const isSettingsSaveDisabled = settingsSaving || !isValidName(settingsData.name) || profilePhoneInvalid;
@@ -793,8 +699,7 @@ export default function App() {
     !employeeForm.name.trim() ||
     !employeeForm.email.trim() ||
     employeeNameInvalid ||
-    employeePhoneInvalid ||
-    employeeEmailInvalid;
+    employeePhoneInvalid;
   const isFeedbackSubmitDisabled =
     !feedbackForm.name.trim() ||
     !feedbackForm.email.trim() ||
@@ -1076,11 +981,11 @@ export default function App() {
   };
 
   const updateTicketFilter = (field, value) => {
-    setTicketFilters((prev) => ({ ...prev, [field]: value, page: 1 }));
+    setTicketFilters((prev) => ({ ...prev, [field]: value }));
   };
 
   const resetTicketFilters = () => {
-    setTicketFilters({ status: "", origin: "", destination: "", dateFrom: "", dateTo: "", page: 1, limit: 20 });
+    setTicketFilters({ status: "", origin: "", destination: "", dateFrom: "", dateTo: "" });
   };
 
   const toNumber = (value) => {
@@ -1247,12 +1152,8 @@ export default function App() {
   };
 
   const updateStatus = async (ticketId, status) => {
-    try {
-      await api.patch(`/tickets/${ticketId}/status`, { status });
-      fetchTickets();
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to update ticket status");
-    }
+    await api.patch(`/tickets/${ticketId}/status`, { status });
+    fetchTickets();
   };
 
   const sendQuote = async () => {
@@ -1261,53 +1162,29 @@ export default function App() {
       setMessage("Carrier and rate are required for a quote.");
       return;
     }
-    try {
-      await api.post(`/tickets/${selectedTicket.ticketId}/quote`, {
-        ...quote,
-        rate: Number(quote.rate),
-        chargeableWeight: quote.chargeableWeight ? Number(quote.chargeableWeight) : undefined,
-        totalAmount: quote.totalAmount ? Number(quote.totalAmount) : undefined,
-      });
-      fetchTickets();
-      setToastMessage("Quote sent successfully.");
-    } catch (error) {
-      setMessage(error.response?.data?.message || "Failed to send quote");
-    }
+    await api.post(`/tickets/${selectedTicket.ticketId}/quote`, {
+      ...quote,
+      rate: Number(quote.rate),
+      chargeableWeight: quote.chargeableWeight ? Number(quote.chargeableWeight) : undefined,
+      totalAmount: quote.totalAmount ? Number(quote.totalAmount) : undefined,
+    });
+    fetchTickets();
   };
 
   const confirmQuote = async (ticketId) => {
-    try {
-      const { data } = await api.post(`/tickets/${ticketId}/confirm`);
-      fetchTickets();
-      setToastMessage(data?.message || "Quote confirmed.");
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to confirm quote");
-    }
+    await api.post(`/tickets/${ticketId}/confirm`);
+    fetchTickets();
   };
 
   const reopenTicket = async (ticketId) => {
-    try {
-      const { data } = await api.post(`/tickets/${ticketId}/reopen`);
-      fetchTickets();
-      setToastMessage(data?.message || "Request sent to update the quote.");
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to reopen ticket");
-    }
+    await api.post(`/tickets/${ticketId}/reopen`);
+    fetchTickets();
   };
 
   const bookShipment = async () => {
     if (!selectedTicket) return;
-    if (!booking.reference.trim()) {
-      setToastMessage("Booking reference is required.");
-      return;
-    }
-    try {
-      const { data } = await api.post(`/tickets/${selectedTicket.ticketId}/book`, booking);
-      fetchTickets();
-      setToastMessage(data?.message || "Booking saved successfully.");
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to book shipment");
-    }
+    await api.post(`/tickets/${selectedTicket.ticketId}/book`, booking);
+    fetchTickets();
   };
 
   const handleEmployeeFormChange = (field, value) => {
@@ -1327,10 +1204,6 @@ export default function App() {
         setEmployeeMessage(`${nameErrorMessage}.`);
         return;
       }
-      if (!isValidEmail(employeeForm.email)) {
-        setEmployeeMessage(`${emailErrorMessage}.`);
-        return;
-      }
       if (normalizedPhone && !isValidPhone(normalizedPhone)) {
         setEmployeeMessage(phoneErrorMessage);
         return;
@@ -1345,8 +1218,7 @@ export default function App() {
         setEmployeeMessage("Employee updated successfully.");
       } else {
         const { data } = await api.post("/employees", payload);
-        const tempPassword = data?.data?.tempPassword || data?.tempPassword || "";
-        setEmployeeMessage(`Employee created. Temp password: ${tempPassword}`);
+        setEmployeeMessage(`Employee created. Temp password: ${data.tempPassword}`);
         setToastMessage("Employee created successfully.");
       }
       resetEmployeeForm();
@@ -1373,31 +1245,22 @@ export default function App() {
 
   const toggleEmployeeStatus = async (employee) => {
     const nextStatus = employee.status === "active" ? "inactive" : "active";
-    try {
-      await api.patch(`/employees/${employee._id}/status`, { status: nextStatus });
-      fetchEmployees();
-    } catch (error) {
-      setEmployeeMessage(error.response?.data?.message || "Failed to update status");
-    }
+    await api.patch(`/employees/${employee._id}/status`, { status: nextStatus });
+    fetchEmployees();
   };
 
   const resetEmployeePassword = async (employee) => {
     try {
       const { data } = await api.patch(`/employees/${employee._id}/reset-password`);
-      const tempPassword = data?.data?.tempPassword || data?.tempPassword || "";
-      setEmployeeMessage(`Password reset. Temp password: ${tempPassword}`);
+      setEmployeeMessage(`Password reset. Temp password: ${data.tempPassword}`);
     } catch (error) {
       setEmployeeMessage(error.response?.data?.message || "Reset password failed");
     }
   };
 
   const deleteEmployee = async (employee) => {
-    try {
-      await api.delete(`/employees/${employee._id}`);
-      fetchEmployees();
-    } catch (error) {
-      setEmployeeMessage(error.response?.data?.message || "Failed to delete employee");
-    }
+    await api.delete(`/employees/${employee._id}`);
+    fetchEmployees();
   };
 
   const openCloseModal = (ticket) => {
@@ -1423,27 +1286,18 @@ export default function App() {
       setCloseError("Final rate must be numeric.");
       return;
     }
-    try {
-      const { data } = await api.post(`/tickets/${closeModalTicket.ticketId}/close`, {
-        ...closeForm,
-        finalRate: Number(closeForm.finalRate),
-      });
-      setCloseModalTicket(null);
-      setToastMessage(data?.message || "Ticket closed successfully.");
-      fetchTickets();
-    } catch (error) {
-      setCloseError(error.response?.data?.message || "Failed to close ticket");
-    }
+    await api.post(`/tickets/${closeModalTicket.ticketId}/close`, {
+      ...closeForm,
+      finalRate: Number(closeForm.finalRate),
+    });
+    setCloseModalTicket(null);
+    setToastMessage("Ticket closed successfully.");
+    fetchTickets();
   };
 
   const assignTicket = async (ticketId, employeeId) => {
-    try {
-      await api.patch(`/tickets/${ticketId}/assign`, { employeeId });
-      fetchTickets();
-      setToastMessage("Assignment updated.");
-    } catch (error) {
-      setToastMessage(error.response?.data?.message || "Failed to assign employee");
-    }
+    await api.patch(`/tickets/${ticketId}/assign`, { employeeId });
+    fetchTickets();
   };
 
   const filteredEmployees = employees.filter((employee) => {
@@ -1483,8 +1337,9 @@ export default function App() {
     const total = tickets.length;
     return {
       total,
-      pending: tickets.filter((t) => t.status === "pending" || t.status === "open").length,
+      open: tickets.filter((t) => t.status === "open").length,
       quoted: tickets.filter((t) => t.status === "quoted").length,
+      transit: tickets.filter((t) => t.status === "in_transit").length,
       closed: tickets.filter((t) => t.status === "closed").length,
     };
   }, [tickets]);
@@ -1493,7 +1348,7 @@ export default function App() {
     ? dashboardStats
     : {
         totalTickets: stats.total,
-        pendingTickets: stats.pending,
+        pendingTickets: stats.open,
         quotedTickets: stats.quoted,
         closedTickets: stats.closed,
         todayTickets: 0,
@@ -1553,10 +1408,7 @@ export default function App() {
       >
         <option value="">All statuses</option>
         <option value="pending">Pending</option>
-        <option value="assigned">Assigned</option>
         <option value="quoted">Quoted</option>
-        <option value="accepted">Accepted</option>
-        <option value="booked">Booked</option>
         <option value="closed">Closed</option>
       </select>
       <input
@@ -2205,6 +2057,20 @@ export default function App() {
                           stopPropagation(event);
                           selectTicket(ticket);
                         }}>Open</button>
+                        <div className="flex">
+                          <button className="btn" onClick={(event) => {
+                            stopPropagation(event);
+                            updateStatus(ticket.ticketId, "open");
+                          }}>Open</button>
+                          <button className="btn" onClick={(event) => {
+                            stopPropagation(event);
+                            updateStatus(ticket.ticketId, "in_transit");
+                          }}>In-transit</button>
+                          <button className="btn" onClick={(event) => {
+                            stopPropagation(event);
+                            updateStatus(ticket.ticketId, "closed");
+                          }}>Closed</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2299,7 +2165,7 @@ export default function App() {
                             <div className="note">{ticket.customerName} | {ticket.origin} to {ticket.destination}</div>
                             <div className="note">Cargo: {ticket.cargoType}</div>
                             {ticket.assignedEmployeeName && (
-                              <div className="note">Assigned: {ticket.assignedEmployeeName} ({ticket.assignedEmployeeCode || ticket.assignedEmployeeId || "-"})</div>
+                              <div className="note">Assigned: {ticket.assignedEmployeeName} ({ticket.assignedEmployeeId})</div>
                             )}
                             {ticket.status !== "closed" && (
                               <button className="btn" onClick={(event) => {
@@ -2397,12 +2263,7 @@ export default function App() {
                         />
                         {employeeNameInvalid && <div className="input-error-text">{nameErrorMessage}</div>}
                     <label>Email</label>
-                    <input
-                      value={employeeForm.email}
-                      onChange={(e) => handleEmployeeFormChange("email", e.target.value)}
-                      className={employeeEmailInvalid ? "input-error" : ""}
-                    />
-                    {employeeEmailInvalid && <div className="input-error-text">{emailErrorMessage}</div>}
+                    <input value={employeeForm.email} onChange={(e) => handleEmployeeFormChange("email", e.target.value)} />
                         <label>Password (optional)</label>
                         <input
                           type="password"

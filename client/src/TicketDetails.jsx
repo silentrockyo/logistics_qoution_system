@@ -5,10 +5,6 @@ import { api } from "./api.js";
 const formatStatus = (status) => {
   if (!status) return "";
   if (status === "open") return "PENDING";
-  if (status === "pending") return "PENDING";
-  if (status === "assigned") return "ASSIGNED";
-  if (status === "accepted") return "ACCEPTED";
-  if (status === "booked") return "BOOKED";
   return status.replace(/_/g, " ").toUpperCase();
 };
 
@@ -26,7 +22,7 @@ export default function TicketDetails() {
         setLoading(true);
         const { data } = await api.get(`/tickets/${id}`);
         if (isMounted) {
-          setTicket(data?.data || data);
+          setTicket(data);
           setError("");
         }
       } catch (err) {

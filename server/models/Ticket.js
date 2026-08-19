@@ -30,7 +30,6 @@ const bookingSchema = new mongoose.Schema(
     reference: { type: String, required: true },
     notes: { type: String },
     bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    bookedAt: { type: Date },
   },
   { timestamps: true }
 );
@@ -57,7 +56,6 @@ const ticketSchema = new mongoose.Schema(
   {
     ticketId: { type: String, required: true, unique: true },
     customer: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    customerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     customerName: { type: String, required: true },
     origin: { type: String, required: true },
     destination: { type: String, required: true },
@@ -67,15 +65,11 @@ const ticketSchema = new mongoose.Schema(
     loadSummary: { type: [String], default: [] },
     notes: { type: String },
     assignedEmployee: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    assignedEmployeeId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     assignedEmployeeName: { type: String },
-    assignedEmployeeCode: { type: String },
+    assignedEmployeeId: { type: String },
     quotes: { type: [quoteSchema], default: [] },
-    quoteDetails: quoteSchema,
-    quotedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     closedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     closedByName: { type: String },
-    confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     closedAt: { type: String },
     bookedOn: { type: String },
     finalRate: { type: Number },
@@ -84,12 +78,11 @@ const ticketSchema = new mongoose.Schema(
     closingNotes: { type: String },
     status: {
       type: String,
-      enum: ["pending", "assigned", "quoted", "accepted", "booked", "closed", "open", "in_transit"],
-      default: "pending",
+      enum: ["open", "quoted", "in_transit", "closed"],
+      default: "open",
     },
     quote: quoteSchema,
     booking: bookingSchema,
-    bookingConfirmation: bookingSchema,
   },
   { timestamps: true }
 );

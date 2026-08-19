@@ -12,7 +12,7 @@ router.use(authGuard);
 
 router.get("/me", async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).lean();
+    const user = await User.findByeId(req.user.id).lean();
     if (!user || user.isDeleted) {
       return sendError(res, "User not found", 404);
     }
